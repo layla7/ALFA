@@ -522,7 +522,7 @@ class MAMLFewShotClassifier(nn.Module):
         self.zero_grad()
         self.scheduler.step(epoch=epoch)
 
-        return losses, per_task_target_preds, self.scheduler.get_last_lr()
+        return losses, per_task_target_preds, self.scheduler.get_last_lr()[0]
 
     def run_validation_iter(self, data_batch):
         """
