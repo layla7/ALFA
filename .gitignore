@@ -8,6 +8,7 @@ __pycache__/
 datasets
 wandb
 alfa+*
+*.ipynb
 
 # C extensions
 *.so
