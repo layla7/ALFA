@@ -20,7 +20,7 @@ class ExperimentBuilder(object):
         """
         wandb.init(
             project='ALFA',
-            config=vars(args)
+            config=vars(args),
             id=args.wandb_id,
             resume='allow'
         )
