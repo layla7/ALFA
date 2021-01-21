@@ -56,5 +56,6 @@
   "attenuate": false,
   "alfa": true,
   "random_init": true,
-  "backbone": "ResNet12"
+  "backbone": "ResNet12",
+  "wandb_log_period": 50
 }

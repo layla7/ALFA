@@ -1,5 +1,5 @@
 {
-  "batch_size":2,
+  "batch_size":1,
   "image_height":84,
   "image_width":84,
   "image_channels":3,
@@ -55,5 +55,6 @@
   "use_multi_step_loss_optimization":false,
   "attenuate": false,
   "alfa": true,
-  "backbone": "ResNet12"
+  "backbone": "ResNet12",
+  "wandb_log_period": 50
 }

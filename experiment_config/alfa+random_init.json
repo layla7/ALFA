@@ -56,5 +56,6 @@
   "attenuate": false,
   "alfa": true,
   "random_init": true,
-  "backbone": "4-CONV"
+  "backbone": "4-CONV",
+  "wandb_log_period": 50
 }

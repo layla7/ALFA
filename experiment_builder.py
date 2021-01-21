@@ -5,6 +5,7 @@ import sys
 from utils.storage import build_experiment_folder, save_statistics, save_to_json
 import time
 import torch
+import wandb
 
 
 class ExperimentBuilder(object):
@@ -17,9 +18,15 @@ class ExperimentBuilder(object):
         :param model: A meta learning system instance
         :param device: Device/s to use for the experiment
         """
+        wandb.init(
+            project='ALFA',
+            config=vars(args)
+        )
+
         self.args, self.device = args, device
 
         self.model = model
+        wandb.watch(self.model)
         self.saved_models_filepath, self.logs_filepath, self.samples_filepath = build_experiment_folder(
             experiment_name=self.args.experiment_name)
 
@@ -129,7 +136,7 @@ class ExperimentBuilder(object):
             print("shape of data", x_support_set.shape, x_target_set.shape, y_support_set.shape,
                   y_target_set.shape)
 
-        losses, _ = self.model.run_train_iter(data_batch=data_batch, epoch=epoch_idx)
+        losses, _, current_lr = self.model.run_train_iter(data_batch=data_batch, epoch=epoch_idx)
 
         for key, value in zip(list(losses.keys()), list(losses.values())):
             if key not in total_losses:
@@ -141,11 +148,11 @@ class ExperimentBuilder(object):
         train_output_update = self.build_loss_summary_string(losses)
 
         pbar_train.update(1)
-        pbar_train.set_description("training phase {} -> {}".format(self.epoch, train_output_update))
+        #pbar_train.set_description("training phase {} -> {}".format(self.epoch, train_output_update))
 
         current_iter += 1
 
-        return train_losses, total_losses, current_iter
+        return train_losses, total_losses, current_iter, current_lr
 
     def evaluation_iteration(self, val_sample, total_losses, pbar_val, phase):
         """
@@ -170,8 +177,7 @@ class ExperimentBuilder(object):
         val_output_update = self.build_loss_summary_string(losses)
 
         pbar_val.update(1)
-        pbar_val.set_description(
-            "val_phase {} -> {}".format(self.epoch, val_output_update))
+        #pbar_val.set_description("val_phase {} -> {}".format(self.epoch, val_output_update))
 
         return val_losses, total_losses
 
@@ -327,7 +333,7 @@ class ExperimentBuilder(object):
                                                                       'current_iter'],
                                                     augment_images=self.augment_flag)):
                     # print(self.state['current_iter'], (self.args.total_epochs * self.args.total_iter_per_epoch))
-                    train_losses, total_losses, self.state['current_iter'] = self.train_iteration(
+                    train_losses, total_losses, self.state['current_iter'], self.state['current_lr'] = self.train_iteration(
                         train_sample=train_sample,
                         total_losses=self.total_losses,
                         epoch_idx=(self.state['current_iter'] /
@@ -335,6 +341,14 @@ class ExperimentBuilder(object):
                         pbar_train=pbar_train,
                         current_iter=self.state['current_iter'],
                         sample_idx=self.state['current_iter'])
+
+                    if self.state['current_iter'] % self.args.wandb_log_period == 0:
+                        wandb.log({'train_loss_mean': train_losses['train_loss_mean'],
+                                   'train_loss_std': train_losses['train_loss_std'],
+                                   'train_accuracy_mean': train_losses['train_accuracy_mean'],
+                                   'train_accuracy_std': train_losses['train_accuracy_std'],
+                                   'meta_lr': self.state['current_lr']},
+                                  step=self.state['current_iter'])                        
 
                     if self.state['current_iter'] % self.args.total_iter_per_epoch == 0:
 
@@ -354,6 +368,11 @@ class ExperimentBuilder(object):
                                 self.state['best_val_iter'] = self.state['current_iter']
                                 self.state['best_epoch'] = int(
                                     self.state['best_val_iter'] / self.args.total_iter_per_epoch)
+
+                            wandb.log({'val_accuracy_mean': val_losses['val_accuracy_mean'],
+                                       'val_accuracy_std': val_losses['val_accuracy_std'],
+                                       'best_val_acc': self.state['best_val_acc']},
+                                      step=self.state['current_iter'])
 
 
                         self.epoch += 1
