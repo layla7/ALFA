@@ -1,4 +1,4 @@
-import tqdm.auto as tqdm
+import tqdm.autonotebook as tqdm
 import os
 import numpy as np
 import sys
