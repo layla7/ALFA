@@ -1,4 +1,4 @@
-import tqdm
+import tqdm.auto as tqdm
 import os
 import numpy as np
 import sys
@@ -21,6 +21,8 @@ class ExperimentBuilder(object):
         wandb.init(
             project='ALFA',
             config=vars(args)
+            id=args.wandb_id,
+            resume='allow'
         )
 
         self.args, self.device = args, device
@@ -333,7 +335,7 @@ class ExperimentBuilder(object):
                                                                       'current_iter'],
                                                     augment_images=self.augment_flag)):
                     # print(self.state['current_iter'], (self.args.total_epochs * self.args.total_iter_per_epoch))
-                    train_losses, total_losses, self.state['current_iter'], self.state['current_lr'] = self.train_iteration(
+                    train_losses, total_losses, self.state['current_iter'], current_lr = self.train_iteration(
                         train_sample=train_sample,
                         total_losses=self.total_losses,
                         epoch_idx=(self.state['current_iter'] /
@@ -347,7 +349,7 @@ class ExperimentBuilder(object):
                                    'train_loss_std': train_losses['train_loss_std'],
                                    'train_accuracy_mean': train_losses['train_accuracy_mean'],
                                    'train_accuracy_std': train_losses['train_accuracy_std'],
-                                   'meta_lr': self.state['current_lr']},
+                                   'meta_lr': current_lr},
                                   step=self.state['current_iter'])                        
 
                     if self.state['current_iter'] % self.args.total_iter_per_epoch == 0:
@@ -373,7 +375,6 @@ class ExperimentBuilder(object):
                                        'val_accuracy_std': val_losses['val_accuracy_std'],
                                        'best_val_acc': self.state['best_val_acc']},
                                       step=self.state['current_iter'])
-
 
                         self.epoch += 1
                         self.state = self.merge_two_dicts(first_dict=self.merge_two_dicts(first_dict=self.state,
