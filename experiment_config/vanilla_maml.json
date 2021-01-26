@@ -1,5 +1,5 @@
 {
-  "experiment_name":"alfa+random_init",
+  "experiment_name":"vanilla_maml",
   "batch_size":2,
   "image_height":84,
   "image_width":84,
@@ -54,8 +54,9 @@
   "second_order": true,
   "use_multi_step_loss_optimization":false,
   "attenuate": false,
-  "alfa": true,
-  "random_init": true,
+  "alfa": false,
+  "random_init": false,
   "backbone": "4-CONV",
-  "wandb_log_period": 50
+  "wandb_log_period": 50,
+  "attention": false
 }

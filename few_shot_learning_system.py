@@ -1,13 +1,16 @@
+from functools import partial
 import os
 
 import numpy as np
+import wandb
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
-from meta_neural_network_architectures import VGGReLUNormNetwork, ResNet12
-from inner_loop_optimizers import LSLRGradientDescentLearningRule
+from meta_neural_network_architectures import VGGReLUNormAttentionNetwork, VGGReLUNormNetwork, ResNet12
+from inner_loop_optimizers import (LSLRGradientDescentLearningRule,
+                                   LSLRGradientDescentLearningRuleALFA)
 
 
 def set_torch_seed(seed):
@@ -21,6 +24,12 @@ def set_torch_seed(seed):
     torch.manual_seed(seed=torch_seed)
 
     return rng
+
+
+def get_partial_weights(arg):
+    for name, value in arg:
+        if 'attention' not in name:
+            yield (name, value)
 
 
 class MAMLFewShotClassifier(nn.Module):
@@ -45,6 +54,10 @@ class MAMLFewShotClassifier(nn.Module):
             self.classifier = ResNet12(im_shape=self.im_shape, num_output_classes=self.args.
                                                  num_classes_per_set,
                                                  args=args, device=device, meta_classifier=True).to(device=self.device)
+        elif self.args.backbone == '4-CONV' and self.args.attention:
+            self.classifier = VGGReLUNormAttentionNetwork(im_shape=self.im_shape, num_output_classes=self.args.
+                                                 num_classes_per_set,
+                                                 args=args, device=device, meta_classifier=True).to(device=self.device)
         else:
             self.classifier = VGGReLUNormNetwork(im_shape=self.im_shape, num_output_classes=self.args.
                                                  num_classes_per_set,
@@ -52,15 +65,25 @@ class MAMLFewShotClassifier(nn.Module):
 
         self.task_learning_rate = args.init_inner_loop_learning_rate
 
-        self.inner_loop_optimizer = LSLRGradientDescentLearningRule(device=device,
-                                                                    init_learning_rate=self.task_learning_rate,
-                                                                    init_weight_decay=args.init_inner_loop_weight_decay,
-                                                                    total_num_inner_loop_steps=self.args.number_of_training_steps_per_iter,
-                                                                    use_learnable_weight_decay=self.args.alfa,
-                                                                    use_learnable_learning_rates=self.args.alfa,
-                                                                    alfa=self.args.alfa, random_init=self.args.random_init)
 
-        names_weights_copy = self.get_inner_loop_parameter_dict(self.classifier.named_parameters())
+        if not self.args.alfa:
+            self.inner_loop_optimizer = LSLRGradientDescentLearningRule(device=device,
+                                                                        init_learning_rate=self.task_learning_rate,
+                                                                        total_num_inner_loop_steps=self.args.number_of_training_steps_per_iter,
+                                                                        use_learnable_learning_rates=self.args.learnable_per_layer_per_step_inner_loop_learning_rate)
+            if self.args.attention:
+                names_weights_copy = self.get_inner_loop_parameter_dict(get_partial_weights(self.classifier.named_parameters()))
+            else:
+                names_weights_copy = self.get_inner_loop_parameter_dict(self.classifier.named_parameters())
+        else:
+            self.inner_loop_optimizer = LSLRGradientDescentLearningRuleALFA(device=device,
+                                                                        init_learning_rate=self.task_learning_rate,
+                                                                        init_weight_decay=args.init_inner_loop_weight_decay,
+                                                                        total_num_inner_loop_steps=self.args.number_of_training_steps_per_iter,
+                                                                        use_learnable_weight_decay=self.args.alfa,
+                                                                        use_learnable_learning_rates=self.args.alfa,
+                                                                        alfa=self.args.alfa, random_init=self.args.random_init)
+            names_weights_copy = self.get_inner_loop_parameter_dict(self.classifier.named_paramters())
 
         if self.args.attenuate:
             num_layers = len(names_weights_copy)
@@ -141,6 +164,7 @@ class MAMLFewShotClassifier(nn.Module):
                 self.to(torch.cuda.current_device())
 
             self.device = torch.cuda.current_device()
+
 
     def get_task_embeddings(self, x_support_set_task, y_support_set_task, names_weights_copy):
         # Use gradients as task embeddings
@@ -248,11 +272,16 @@ class MAMLFewShotClassifier(nn.Module):
             names_grads_copy[key] = names_grads_copy[key].sum(dim=0)
 
 
-        names_weights_copy = self.inner_loop_optimizer.update_params(names_weights_dict=names_weights_copy,
-                                                                     names_grads_wrt_params_dict=names_grads_copy,
-                                                                     generated_alpha_params=generated_alpha_params,
-                                                                     generated_beta_params=generated_beta_params,
-                                                                     num_step=current_step_idx)
+        if not self.args.alfa:
+            names_weights_copy = self.inner_loop_optimizer.update_params(names_weights_dict=names_weights_copy,
+                                                                         names_grads_wrt_params_dict=names_grads_copy,
+                                                                         num_step=current_step_idx)
+        else:
+            names_weights_copy = self.inner_loop_optimizer.update_params(names_weights_dict=names_weights_copy,
+                                                                        names_grads_wrt_params_dict=names_grads_copy,
+                                                                        generated_alpha_params=generated_alpha_params,
+                                                                        generated_beta_params=generated_beta_params,
+                                                                        num_step=current_step_idx)
 
         num_devices = torch.cuda.device_count() if torch.cuda.is_available() else 1
         names_weights_copy = {
@@ -309,7 +338,11 @@ class MAMLFewShotClassifier(nn.Module):
             per_step_support_accuracy = []
             per_step_target_accuracy = []
             per_step_loss_importance_vectors = self.get_per_step_loss_importance_vector()
-            names_weights_copy = self.get_inner_loop_parameter_dict(self.classifier.named_parameters())
+            
+            if self.args.attention:
+                names_weights_copy = self.get_inner_loop_parameter_dict(get_partial_weights(self.classifier.named_parameters()))
+            else:
+                names_weights_copy = self.get_inner_loop_parameter_dict(self.classifier.named_parameters())
 
             num_devices = torch.cuda.device_count() if torch.cuda.is_available() else 1
 

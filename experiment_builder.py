@@ -18,19 +18,26 @@ class ExperimentBuilder(object):
         :param model: A meta learning system instance
         :param device: Device/s to use for the experiment
         """
+        try:
+            wandb_id = os.environ['WANDB_RUN_ID']
+        except KeyError:
+            wandb_id = wandb.util.generate_id()
+
         wandb.init(
-            project='ALFA',
+            project=args.experiment_name,
             config=vars(args),
-            id=args.wandb_id,
+            id=wandb_id,
             resume='allow'
         )
+        wandb.run.name = args.wandb_run_name
+        wandb.run.save()
 
         self.args, self.device = args, device
 
         self.model = model
         wandb.watch(self.model)
         self.saved_models_filepath, self.logs_filepath, self.samples_filepath = build_experiment_folder(
-            experiment_name=self.args.experiment_name)
+            experiment_name='experiments/'+self.args.experiment_name+'_{}'.format(wandb_id))
 
         self.total_losses = dict()
         self.state = dict()
@@ -168,6 +175,22 @@ class ExperimentBuilder(object):
         data_batch = (
             x_support_set, x_target_set, y_support_set, y_target_set)
 
+        '''
+        def hook_fn_wandb_log(m, i, o):
+            wandb.log({'attention': wandb.Image(x_target_set * o)})
+
+        hooks = {}
+        def hook(net, hook_fn):
+            for name, layer in net._modules.items():
+                for name, layer2 in layer.items():
+                    if 'conv' in name:
+                        hooks[name+'_channel'] = layer2.attention_layer.channel_attention.register_forward_hook(hook_fn)
+                        hooks[name+'_spatial'] = layer2.attention_layer.spatial_attention.register_forward_hook(hook_fn)
+                    else:
+                        continue
+        hook(self.model.classifier, hook_fn_wandb_log)
+        '''
+
         losses, _ = self.model.run_validation_iter(data_batch=data_batch)
         for key, value in zip(list(losses.keys()), list(losses.values())):
             if key not in total_losses:
@@ -180,6 +203,9 @@ class ExperimentBuilder(object):
 
         pbar_val.update(1)
         #pbar_val.set_description("val_phase {} -> {}".format(self.epoch, val_output_update))
+        #for key, value in hook.values():
+        #    print(key)
+        #    value.remove()
 
         return val_losses, total_losses
 
@@ -202,8 +228,7 @@ class ExperimentBuilder(object):
         test_output_update = self.build_loss_summary_string(losses)
 
         pbar_test.update(1)
-        pbar_test.set_description(
-            "test_phase {} -> {}".format(self.epoch, test_output_update))
+        pbar_test.set_description("test_phase {} -> {}".format(self.epoch, test_output_update))
 
         return per_model_per_batch_preds
 
@@ -399,5 +424,5 @@ class ExperimentBuilder(object):
                         if self.epochs_done_in_this_run >= self.total_epochs_before_pause:
                             print("train_seed {}, val_seed: {}, at pause time".format(self.data.dataset.seed["train"],
                                                                                       self.data.dataset.seed["val"]))
-                            sys.exit()
+                            #sys.exit()
             self.evaluated_test_set_using_the_best_models(top_n_models=5)
