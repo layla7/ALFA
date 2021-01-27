@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # If you want to resume wandb run, use the command below.
-# $ WANDB_RUN_ID="your.run.id" bash maml+attention.sh "run.name" 0
+# $ WANDB_RUN_ID=wandb_run_id bash alfa+maml_resnet12.sh run_name 0 [1]
 
 export WANDB_RUN_NAME=$1
 export GPU_ID=$2
