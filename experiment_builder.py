@@ -228,7 +228,7 @@ class ExperimentBuilder(object):
         test_output_update = self.build_loss_summary_string(losses)
 
         pbar_test.update(1)
-        pbar_test.set_description("test_phase {} -> {}".format(self.epoch, test_output_update))
+        #pbar_test.set_description("test_phase {} -> {}".format(self.epoch, test_output_update))
 
         return per_model_per_batch_preds
 
@@ -333,15 +333,18 @@ class ExperimentBuilder(object):
         accuracy_std = np.std(np.equal(per_batch_targets, per_batch_max))
 
         test_losses = {"test_accuracy_mean": accuracy, "test_accuracy_std": accuracy_std}
+        dataset_name = self.data.dataset.dataset_name
 
         _ = save_statistics(self.logs_filepath,
                             list(test_losses.keys()),
-                            create=True, filename="test_summary.csv")
+                            create=True, filename="test_summary_{}.csv".format(dataset_name))
 
         summary_statistics_filepath = save_statistics(self.logs_filepath,
                                                       list(test_losses.values()),
-                                                      create=False, filename="test_summary.csv")
-        print(test_losses)
+                                                      create=False, filename="test_summary_{}.csv".format(dataset_name))
+        #print(test_losses)
+        print('\n')
+        print('test accuracy mean: {:.4f} test accuracy std: {:.4f}'.format(*test_losses.values()))
         print("saved test performance at", summary_statistics_filepath)
 
     def run_experiment(self):
@@ -349,10 +352,9 @@ class ExperimentBuilder(object):
         Runs a full training experiment with evaluations of the model on the val set at every epoch. Furthermore,
         will return the test set evaluation results on the best performing validation model.
         """
-        with tqdm.tqdm(initial=self.state['current_iter'],
-                       total=int(self.args.total_iter_per_epoch * self.args.total_epochs)) as pbar_train:
-
-            while (self.state['current_iter'] < (self.args.total_epochs * self.args.total_iter_per_epoch)) and (self.args.evaluate_on_test_set_only == False):
+        while (self.state['current_iter'] < (self.args.total_epochs * self.args.total_iter_per_epoch)) and (self.args.evaluate_on_test_set_only == False):
+            with tqdm.tqdm(initial=self.state['current_iter'],
+                        total=int(self.args.total_iter_per_epoch * self.args.total_epochs)) as pbar_train:
 
                 for train_sample_idx, train_sample in enumerate(
                         self.data.get_train_batches(total_batches=int(self.args.total_iter_per_epoch *
@@ -425,4 +427,4 @@ class ExperimentBuilder(object):
                             print("train_seed {}, val_seed: {}, at pause time".format(self.data.dataset.seed["train"],
                                                                                       self.data.dataset.seed["val"]))
                             #sys.exit()
-            self.evaluated_test_set_using_the_best_models(top_n_models=5)
+        self.evaluated_test_set_using_the_best_models(top_n_models=5)
