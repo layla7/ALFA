@@ -93,23 +93,27 @@ def get_transforms_for_dataset(dataset_name, args, k):
             transforms.Normalize((0.5071, 0.4847, 0.4408), (0.2675, 0.2565, 0.2761))]
             #transforms.ToTensor(),
             #transforms.Normalize(args.classification_mean, args.classification_std)]
-
     elif 'omniglot' in dataset_name:
-
         transform_train = [rotate_image(k=k, channels=args.image_channels), transforms.ToTensor()]
         transform_evaluate = [transforms.ToTensor()]
-
-
     elif 'imagenet' in dataset_name:
-
         transform_train = [transforms.Compose([
-
-            transforms.ToTensor(), transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])]
-
+            transforms.ToTensor(), 
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))           
+        ])]
         transform_evaluate = [transforms.Compose([
-
-            transforms.ToTensor(), transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])]
-
+            transforms.ToTensor(), 
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+        ])]
+    elif 'CUB' in dataset_name:
+        transform_train = [transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((104 / 255.0, 117 / 255.0, 128 / 255.0),
+                                 (1 / 255.0, 1 / 255.0, 1 / 255.0))
+        ])]
+        transform_evaluate = [transforms.ToTensor()]
+    else:
+        raise NotImplementedError('The other datasets are not supported yet.')
     return transform_train, transform_evaluate
 
 
