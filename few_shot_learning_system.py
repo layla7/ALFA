@@ -83,7 +83,7 @@ class MAMLFewShotClassifier(nn.Module):
                                                                         use_learnable_weight_decay=self.args.alfa,
                                                                         use_learnable_learning_rates=self.args.alfa,
                                                                         alfa=self.args.alfa, random_init=self.args.random_init)
-            names_weights_copy = self.get_inner_loop_parameter_dict(self.classifier.named_paramters())
+            names_weights_copy = self.get_inner_loop_parameter_dict(self.classifier.named_parameters())
 
         if self.args.attenuate:
             num_layers = len(names_weights_copy)
