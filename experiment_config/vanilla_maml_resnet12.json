@@ -56,6 +56,9 @@
   "attenuate": false,
   "alfa": false,
   "backbone": "ResNet12",
+  "wandb": true,
   "wandb_log_period": 50,
-  "attention": false
+  "attention": false,
+  "RM3_inner": false,
+  "RM3_meta": false
 }
