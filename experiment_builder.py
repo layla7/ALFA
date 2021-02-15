@@ -18,26 +18,30 @@ class ExperimentBuilder(object):
         :param model: A meta learning system instance
         :param device: Device/s to use for the experiment
         """
-        try:
-            wandb_id = os.environ['WANDB_RUN_ID']
-        except KeyError:
-            wandb_id = wandb.util.generate_id()
-
-        wandb.init(
-            project=args.experiment_name,
-            config=vars(args),
-            id=wandb_id,
-            resume='allow'
-        )
-        wandb.run.name = args.wandb_run_name
-        wandb.run.save()
-
         self.args, self.device = args, device
-
         self.model = model
-        wandb.watch(self.model)
-        self.saved_models_filepath, self.logs_filepath, self.samples_filepath = build_experiment_folder(
-            experiment_name='experiments/'+self.args.experiment_name+'_{}'.format(wandb_id))
+
+        if args.wandb:
+            try:
+                wandb_id = os.environ['WANDB_RUN_ID']
+            except KeyError:
+                wandb_id = wandb.util.generate_id()
+
+            wandb.init(
+                project=args.experiment_name,
+                config=vars(args),
+                id=wandb_id,
+                resume='allow'
+            )
+            wandb.run.name = args.wandb_run_name
+            wandb.run.save()
+            wandb.watch(self.model)
+
+            self.saved_models_filepath, self.logs_filepath, self.samples_filepath = build_experiment_folder(
+                experiment_name='experiments/'+self.args.experiment_name+'_{}'.format(wandb_id))
+        else:
+            self.saved_models_filepath, self.logs_filepath, self.samples_filepath = build_experiment_folder(
+                experiment_name='experiments/'+self.args.experiment_name)
 
         self.total_losses = dict()
         self.state = dict()
@@ -145,7 +149,7 @@ class ExperimentBuilder(object):
             print("shape of data", x_support_set.shape, x_target_set.shape, y_support_set.shape,
                   y_target_set.shape)
 
-        losses, _, current_lr = self.model.run_train_iter(data_batch=data_batch, epoch=epoch_idx)
+        losses, _, current_lr = self.model.run_train_iter(data_batch=data_batch, epoch=epoch_idx, current_iter=self.state['current_iter'])
 
         for key, value in zip(list(losses.keys()), list(losses.values())):
             if key not in total_losses:
@@ -371,7 +375,7 @@ class ExperimentBuilder(object):
                         current_iter=self.state['current_iter'],
                         sample_idx=self.state['current_iter'])
 
-                    if self.state['current_iter'] % self.args.wandb_log_period == 0:
+                    if self.state['current_iter'] % self.args.wandb_log_period == 0 and self.args.wandb:
                         wandb.log({'train_loss_mean': train_losses['train_loss_mean'],
                                    'train_loss_std': train_losses['train_loss_std'],
                                    'train_accuracy_mean': train_losses['train_accuracy_mean'],
@@ -398,10 +402,11 @@ class ExperimentBuilder(object):
                                 self.state['best_epoch'] = int(
                                     self.state['best_val_iter'] / self.args.total_iter_per_epoch)
 
-                            wandb.log({'val_accuracy_mean': val_losses['val_accuracy_mean'],
-                                       'val_accuracy_std': val_losses['val_accuracy_std'],
-                                       'best_val_acc': self.state['best_val_acc']},
-                                      step=self.state['current_iter'])
+                            if self.args.wandb:
+                                wandb.log({'val_accuracy_mean': val_losses['val_accuracy_mean'],
+                                        'val_accuracy_std': val_losses['val_accuracy_std'],
+                                        'best_val_acc': self.state['best_val_acc']},
+                                        step=self.state['current_iter'])
 
                         self.epoch += 1
                         self.state = self.merge_two_dicts(first_dict=self.merge_two_dicts(first_dict=self.state,

@@ -1,4 +1,4 @@
-from functools import partial
+from functools import partial, reduce
 import os
 
 import numpy as np
@@ -7,10 +7,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from torch.autograd import grad
 
 from meta_neural_network_architectures import VGGReLUNormAttentionNetwork, VGGReLUNormNetwork, ResNet12
 from inner_loop_optimizers import (LSLRGradientDescentLearningRule,
-                                   LSLRGradientDescentLearningRuleALFA)
+                                   LSLRGradientDescentLearningRuleALFA,
+                                   LSLRGradientDescentLearningRuleRM3)
 
 
 def set_torch_seed(seed):
@@ -47,6 +49,7 @@ class MAMLFewShotClassifier(nn.Module):
         self.use_cuda = args.use_cuda
         self.im_shape = im_shape
         self.current_epoch = 0
+        self.gradients_buffer = [None for _ in range(3)]
 
         self.rng = set_torch_seed(seed=args.seed)
 
@@ -67,10 +70,16 @@ class MAMLFewShotClassifier(nn.Module):
 
 
         if not self.args.alfa:
-            self.inner_loop_optimizer = LSLRGradientDescentLearningRule(device=device,
-                                                                        init_learning_rate=self.task_learning_rate,
-                                                                        total_num_inner_loop_steps=self.args.number_of_training_steps_per_iter,
-                                                                        use_learnable_learning_rates=self.args.learnable_per_layer_per_step_inner_loop_learning_rate)
+            if self.args.RM3_inner:
+                self.inner_loop_optimizer = LSLRGradientDescentLearningRuleRM3(device=device,
+                                                                            init_learning_rate=self.task_learning_rate,
+                                                                            total_num_inner_loop_steps=self.args.number_of_training_steps_per_iter,
+                                                                            use_learnable_learning_rates=self.args.learnable_per_layer_per_step_inner_loop_learning_rate)
+            else:
+                self.inner_loop_optimizer = LSLRGradientDescentLearningRule(device=device,
+                                                                            init_learning_rate=self.task_learning_rate,
+                                                                            total_num_inner_loop_steps=self.args.number_of_training_steps_per_iter,
+                                                                            use_learnable_learning_rates=self.args.learnable_per_layer_per_step_inner_loop_learning_rate)
             if self.args.attention:
                 names_weights_copy = self.get_inner_loop_parameter_dict(get_partial_weights(self.classifier.named_parameters()))
             else:
@@ -149,6 +158,7 @@ class MAMLFewShotClassifier(nn.Module):
             else:
                 self.optimizer = optim.Adam([
                     {'params': self.classifier.parameters()},
+                    {'params': self.inner_loop_optimizer.parameters()},
                 ], lr=args.meta_learning_rate, amsgrad=False)
 
         self.scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer=self.optimizer, T_max=self.args.total_epochs,
@@ -508,23 +518,45 @@ class MAMLFewShotClassifier(nn.Module):
 
         return losses, per_task_target_preds
 
-    def meta_update(self, loss):
+    def meta_update(self, loss, current_iter):
         """
         Applies an outer loop update on the meta-parameters of the model.
         :param loss: The current crossentropy loss.
         """
-        self.optimizer.zero_grad()
-        loss.backward()
+        if self.args.RM3_meta:
+            #def grads(params):
+            #    for param in params:
+            #        yield param.grad.copy()
+            gradients = grad(loss, self.optimizer.param_groups[0]['params'])
+            #self.gradients_buffer[current_iter % 3] = grads(self.optimizer.param_groups[0]['params'])
+            self.gradients_buffer[current_iter % 3] = gradients
+
+            if current_iter >= 2:
+                sum_gradients = reduce(torch.add, self.gradients_buffer)
+                min_gradients = reduce(torch.min, self.gradients_buffer)
+                max_gradients = reduce(torch.max, self.gradients_buffer)
+                median_3 = sum_gradients - min_gradients - max_gradients
+
+                for param, gradient in zip(self.optimizer.param_groups[0]['params'], median_3):
+                    param.grad.data = gradient
+
+            else:
+                for param, gradient in zip(self.optimizer.param_groups[0]['params'], gradients):
+                    param.grad.data = gradient
+        
         #if 'imagenet' in self.args.dataset_name:
         #    for name, param in self.classifier.named_parameters():
         #        if param.requires_grad:
         #            param.grad.data.clamp_(-10, 10)  # not sure if this is necessary, more experiments are needed
         #for name, param in self.classifier.named_parameters():
         #    print(param.mean())
+        else:
+            self.optimizer.zero_grad()
+            loss.backward()
 
         self.optimizer.step()
 
-    def run_train_iter(self, data_batch, epoch):
+    def run_train_iter(self, data_batch, epoch, current_iter):
         """
         Runs an outer loop update step on the meta-model's parameters.
         :param data_batch: input data batch containing the support set and target set input, output pairs
@@ -549,7 +581,7 @@ class MAMLFewShotClassifier(nn.Module):
 
         losses, per_task_target_preds = self.train_forward_prop(data_batch=data_batch, epoch=epoch)
 
-        self.meta_update(loss=losses['loss'])
+        self.meta_update(loss=losses['loss'], current_iter=current_iter)
         losses['learning_rate'] = self.scheduler.get_lr()[0]
         self.optimizer.zero_grad()
         self.zero_grad()
