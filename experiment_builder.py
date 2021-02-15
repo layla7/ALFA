@@ -28,7 +28,7 @@ class ExperimentBuilder(object):
                 wandb_id = wandb.util.generate_id()
 
             wandb.init(
-                project=args.experiment_name,
+                project=args.backbone,
                 config=vars(args),
                 id=wandb_id,
                 resume='allow'
@@ -38,7 +38,7 @@ class ExperimentBuilder(object):
             wandb.watch(self.model)
 
             self.saved_models_filepath, self.logs_filepath, self.samples_filepath = build_experiment_folder(
-                experiment_name='experiments/'+self.args.experiment_name+'_{}'.format(wandb_id))
+                experiment_name='experiments/'+self.args.backbone+'/'+self.args.experiment_name+'_{}'.format(wandb_id))
         else:
             self.saved_models_filepath, self.logs_filepath, self.samples_filepath = build_experiment_folder(
                 experiment_name='experiments/'+self.args.experiment_name)
