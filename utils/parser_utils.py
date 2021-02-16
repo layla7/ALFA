@@ -8,6 +8,7 @@ def get_args():
     import json
     parser = argparse.ArgumentParser(description='Welcome to the L2F training and inference system')
     parser.add_argument('--wandb_run_name', type=str)
+    parser.add_argument('--test', action='store_true', default=False)
     parser.add_argument('--batch_size', nargs="?", type=int, default=32, help='Batch_size for experiment')
     parser.add_argument('--image_height', nargs="?", type=int, default=28)
     parser.add_argument('--image_width', nargs="?", type=int, default=28)

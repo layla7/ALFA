@@ -57,6 +57,9 @@
   "alfa": false,
   "random_init": false,
   "backbone": "4-CONV",
+  "wandb": true,
   "wandb_log_period": 50,
-  "attention": true
+  "attention": true,
+  "RM3_inner": false,
+  "RM3_meta": false
 }

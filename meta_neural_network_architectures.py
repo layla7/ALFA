@@ -83,25 +83,27 @@ class MetaMaxResLayerReLU(nn.Module):
         out = x
 
         self.conv1 = MetaConvNormLayerSwish(input_shape=out.shape,
-                                                                        num_filters=self.num_filters,
-                                                                        kernel_size=3, stride=self.stride,
-                                                                        padding=1,
-                                                                        use_bias=self.use_bias, args=self.args,
-                                                                        normalization=True,
-                                                                        meta_layer=self.meta_layer,
-                                                                        no_bn_learnable_params=False,
-                                                                        device=self.device)
+                                            num_filters=self.num_filters,
+                                            kernel_size=3, stride=self.stride,
+                                            padding=1,
+                                            use_bias=self.use_bias, 
+                                            args=self.args,
+                                            normalization=True,
+                                            meta_layer=self.meta_layer,
+                                            no_bn_learnable_params=False,
+                                            device=self.device)
         out = self.conv1(out, training=True, num_step=0)
 
         self.conv2 = MetaConvNormLayerSwish(input_shape=out.shape,
-                                                                        num_filters=self.num_filters,
-                                                                        kernel_size=3, stride=self.stride,
-                                                                        padding=1,
-                                                                        use_bias=self.use_bias, args=self.args,
-                                                                        normalization=True,
-                                                                        meta_layer=self.meta_layer,
-                                                                        no_bn_learnable_params=False,
-                                                                        device=self.device)
+                                            num_filters=self.num_filters,
+                                            kernel_size=3, stride=self.stride,
+                                            padding=1,
+                                            use_bias=self.use_bias, 
+                                            args=self.args,
+                                            normalization=True,
+                                            meta_layer=self.meta_layer,
+                                            no_bn_learnable_params=False,
+                                            device=self.device)
         out = self.conv2(out, training=True, num_step=0)
 
         self.conv3 = MetaConv2dLayer(in_channels=out.shape[1], out_channels=out.shape[1],
@@ -1169,6 +1171,11 @@ class VGGReLUNormNetwork(nn.Module):
         for i in range(self.num_stages):
             self.layer_dict['conv{}'.format(i)].restore_backup_stats()
 
+    def trainable_parameters(self):
+        for params in self.parameters():
+            if params.requires_grad:
+                yield params
+
 
 class ResNet12(nn.Module):
     def __init__(self, im_shape, num_output_classes, args, device, meta_classifier=True):
@@ -1310,6 +1317,11 @@ class ResNet12(nn.Module):
         #self.layer_dict['conv0'].restore_backup_stats()
         for i in range(self.num_stages):
             self.layer_dict['layer{}'.format(i)].restore_backup_stats()
+
+    def trainable_parameters(self):
+        for params in self.parameters():
+            if params.requires_grad:
+                yield params
 
 
 class VGGReLUNormAttentionNetwork(nn.Module):
@@ -1458,3 +1470,8 @@ class VGGReLUNormAttentionNetwork(nn.Module):
         """
         for i in range(self.num_stages):
             self.layer_dict['conv{}'.format(i)].restore_backup_stats()
+
+    def trainable_parameters(self):
+        for params in self.parameters():
+            if params.requires_grad:
+                yield params

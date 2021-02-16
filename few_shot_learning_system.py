@@ -49,7 +49,8 @@ class MAMLFewShotClassifier(nn.Module):
         self.use_cuda = args.use_cuda
         self.im_shape = im_shape
         self.current_epoch = 0
-        self.gradients_buffer = [None for _ in range(3)]
+        self.gradients_buffer = []
+        self.gradients_counter = 0
 
         self.rng = set_torch_seed(seed=args.seed)
 
@@ -156,10 +157,15 @@ class MAMLFewShotClassifier(nn.Module):
                         {'params': self.regularizer.parameters()},
                     ], lr=args.meta_learning_rate, amsgrad=False)
             else:
-                self.optimizer = optim.Adam([
-                    {'params': self.classifier.parameters()},
-                    {'params': self.inner_loop_optimizer.parameters()},
-                ], lr=args.meta_learning_rate, amsgrad=False)
+                if self.args.learnable_per_layer_per_step_inner_loop_learning_rate:
+                    self.optimizer = optim.Adam([
+                        {'params': self.classifier.trainable_parameters()},
+                        {'params': self.inner_loop_optimizer.parameters()},
+                    ], lr=args.meta_learning_rate, amsgrad=False)
+                else:
+                    self.optimizer = optim.Adam([
+                        {'params': self.classifier.trainable_parameters()},
+                    ], lr=args.meta_learning_rate, amsgrad=False)
 
         self.scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer=self.optimizer, T_max=self.args.total_epochs,
                                                               eta_min=self.args.min_learning_rate)
@@ -527,6 +533,10 @@ class MAMLFewShotClassifier(nn.Module):
             #def grads(params):
             #    for param in params:
             #        yield param.grad.copy()
+            loss.backward()
+            for p in self.optimizer.param_groups[0]['params']:
+                for _ in range(3):
+                    self.gradients_buffer.append(torch.clone(p.grad.data).detach())
             gradients = grad(loss, self.optimizer.param_groups[0]['params'])
             #self.gradients_buffer[current_iter % 3] = grads(self.optimizer.param_groups[0]['params'])
             self.gradients_buffer[current_iter % 3] = gradients
@@ -538,11 +548,13 @@ class MAMLFewShotClassifier(nn.Module):
                 median_3 = sum_gradients - min_gradients - max_gradients
 
                 for param, gradient in zip(self.optimizer.param_groups[0]['params'], median_3):
-                    param.grad.data = gradient
+                    param.grad = gradient
 
             else:
+                for p in self.optimizer.param_groups[0]['params']:
+                    pass
                 for param, gradient in zip(self.optimizer.param_groups[0]['params'], gradients):
-                    param.grad.data = gradient
+                    param.grad = gradient
         
         #if 'imagenet' in self.args.dataset_name:
         #    for name, param in self.classifier.named_parameters():

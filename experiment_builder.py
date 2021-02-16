@@ -21,6 +21,7 @@ class ExperimentBuilder(object):
         self.args, self.device = args, device
         self.model = model
 
+        project_name = args.backbone+'_{}way_{}shot'.format(args.num_classes_per_set, args.num_samples_per_class)
         if args.wandb:
             try:
                 wandb_id = os.environ['WANDB_RUN_ID']
@@ -28,7 +29,7 @@ class ExperimentBuilder(object):
                 wandb_id = wandb.util.generate_id()
 
             wandb.init(
-                project=args.backbone,
+                project=project_name,
                 config=vars(args),
                 id=wandb_id,
                 resume='allow'
@@ -38,10 +39,10 @@ class ExperimentBuilder(object):
             wandb.watch(self.model)
 
             self.saved_models_filepath, self.logs_filepath, self.samples_filepath = build_experiment_folder(
-                experiment_name='experiments/'+self.args.backbone+'/'+self.args.experiment_name+'_{}'.format(wandb_id))
+                experiment_name='experiments/'+project_name+'/'+self.args.experiment_name+'_{}'.format(wandb_id))
         else:
             self.saved_models_filepath, self.logs_filepath, self.samples_filepath = build_experiment_folder(
-                experiment_name='experiments/'+self.args.experiment_name)
+                experiment_name='experiments/'+project_name+'/'+self.args.experiment_name)
 
         self.total_losses = dict()
         self.state = dict()
@@ -356,7 +357,8 @@ class ExperimentBuilder(object):
         Runs a full training experiment with evaluations of the model on the val set at every epoch. Furthermore,
         will return the test set evaluation results on the best performing validation model.
         """
-        while (self.state['current_iter'] < (self.args.total_epochs * self.args.total_iter_per_epoch)) and (self.args.evaluate_on_test_set_only == False):
+        while (self.state['current_iter'] < (self.args.total_epochs * self.args.total_iter_per_epoch)) and (self.args.evaluate_on_test_set_only == False) \
+            and (not self.args.test):
             with tqdm.tqdm(initial=self.state['current_iter'],
                         total=int(self.args.total_iter_per_epoch * self.args.total_epochs)) as pbar_train:
 
