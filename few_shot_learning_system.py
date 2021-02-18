@@ -115,6 +115,7 @@ class MAMLFewShotClassifier(nn.Module):
         self.device = device
         self.args = args
         self.to(device)
+        self.num_conv_layers = len(names_weights_copy) - 2
         print("Outer Loop parameters")
         for name, param in self.named_parameters():
             if param.requires_grad:
@@ -131,7 +132,6 @@ class MAMLFewShotClassifier(nn.Module):
             ).to(device=self.device)
 
         if self.args.attenuate:
-            self.num_layers = len(names_weights_copy)
             if self.args.alfa:
                 self.optimizer = optim.Adam([
                     {'params':self.classifier.parameters()},

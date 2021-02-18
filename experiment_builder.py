@@ -359,18 +359,15 @@ class ExperimentBuilder(object):
         """
         if self.args.attenuate:
             gammas = {}
-            for i in range((self.model.num_layers - 2) // 2):
+            for i in range((self.model.num_conv_layers) // 2):
                 gammas['conv-{}-weight'.format(i)] = []
                 gammas['conv-{}-bias'.format(i)] = []
-            i += 1
-            gammas['linear-weight'] = []
-            gammas['linear-bias'] = []
 
             xs = []
-            ys_weight_mean = [[] for _ in range(self.model.num_layers)]
-            ys_bias_mean = [[] for _ in range(self.model.num_layers)]
-            ys_weight_std = [[] for _ in range(self.model.num_layers)]
-            ys_bias_std = [[] for _ in range(self.model.num_layers)]
+            ys_weight_mean = [[] for _ in range(self.model.num_conv_layers)]
+            ys_bias_mean = [[] for _ in range(self.model.num_conv_layers)]
+            ys_weight_std = [[] for _ in range(self.model.num_conv_layers)]
+            ys_bias_std = [[] for _ in range(self.model.num_conv_layers)]
 
         while (self.state['current_iter'] < (self.args.total_epochs * self.args.total_iter_per_epoch)) and (self.args.evaluate_on_test_set_only == False) \
             and (not self.args.test):
@@ -393,12 +390,9 @@ class ExperimentBuilder(object):
                         sample_idx=self.state['current_iter'])
 
                     if self.args.attenuate:
-                        for i in range((self.model.num_layers - 2) // 2):
+                        for i in range((self.model.num_conv_layers) // 2):
                             gammas['conv-{}-weight'.format(i)].append(self.model.gamma[2*i].item())
                             gammas['conv-{}-bias'.format(i)].append(self.model.gamma[2*i+1].item())
-                        i += 1
-                        gammas['linear-weight'].append(self.model.gamma[2*i].item())
-                        gammas['linear-bias'].append(self.model.gamma[2*i+1].item())
 
                     if self.state['current_iter'] % self.args.wandb_log_period == 0 and self.args.wandb:
                         wandb.log({'train_loss_mean': train_losses['train_loss_mean'],
@@ -417,7 +411,7 @@ class ExperimentBuilder(object):
                             weight_std = std[::2]
                             bias_std = std[1::2]
 
-                            for i in range(self.model.num_layers // 2):
+                            for i in range(self.model.num_conv_layers // 2):
                                 ys_weight_mean[i].append(weight_mean[i])
                                 ys_weight_std[i].append(weight_std[i])
                                 ys_bias_mean[i].append(bias_mean[i])
@@ -427,36 +421,6 @@ class ExperimentBuilder(object):
                                            'gamma layer-{} std'.format(i): weight_std[i]},
                                           step=self.state['current_iter'])
                             
-                            '''                            
-                            wandb.log({'gamma_weight_mean': wandb.plot.line_series(
-                                xs=xs,
-                                ys=ys_weight_mean,
-                                keys=list(gammas.keys())[::2],
-                                title='mean of gamma for weight'
-                            )}, step=self.state['current_iter'])
-
-                            wandb.log({'gamma_weight_std': wandb.plot.line_series(
-                                xs=xs,
-                                ys=ys_weight_std,
-                                keys=list(gammas.keys())[::2],
-                                title='std of gamma for weight'
-                            )}, step=self.state['current_iter'])
-
-                            wandb.log({'gamma_bias_mean': wandb.plot.line_series(
-                                xs=xs,
-                                ys=ys_bias_mean,
-                                keys=list(gammas.keys())[1::2],
-                                title='mean of gamma for bias'
-                            )}, step=self.state['current_iter'])
-
-                            wandb.log({'gamma_bias_std': wandb.plot.line_series(
-                                xs=xs,
-                                ys=ys_bias_std,
-                                keys=list(gammas.keys())[1::2],
-                                title='std of gamma for bias'
-                            )}, step=self.state['current_iter'])
-                            '''
-
                     if self.state['current_iter'] % self.args.total_iter_per_epoch == 0:
 
                         total_losses = dict()
