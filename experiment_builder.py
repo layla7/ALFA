@@ -21,7 +21,7 @@ class ExperimentBuilder(object):
         self.args, self.device = args, device
         self.model = model
 
-        project_name = args.backbone+'_{}way_{}shot'.format(args.num_classes_per_set, args.num_samples_per_class)
+        project_name = args.backbone+'-{}way-{}shot'.format(args.num_classes_per_set, args.num_samples_per_class)
         if args.wandb:
             try:
                 wandb_id = os.environ['WANDB_RUN_ID']
@@ -357,6 +357,21 @@ class ExperimentBuilder(object):
         Runs a full training experiment with evaluations of the model on the val set at every epoch. Furthermore,
         will return the test set evaluation results on the best performing validation model.
         """
+        if self.args.attenuate:
+            gammas = {}
+            for i in range((self.model.num_layers - 2) // 2):
+                gammas['conv-{}-weight'.format(i)] = []
+                gammas['conv-{}-bias'.format(i)] = []
+            i += 1
+            gammas['linear-weight'] = []
+            gammas['linear-bias'] = []
+
+            xs = []
+            ys_weight_mean = [[] for _ in range(self.model.num_layers)]
+            ys_bias_mean = [[] for _ in range(self.model.num_layers)]
+            ys_weight_std = [[] for _ in range(self.model.num_layers)]
+            ys_bias_std = [[] for _ in range(self.model.num_layers)]
+
         while (self.state['current_iter'] < (self.args.total_epochs * self.args.total_iter_per_epoch)) and (self.args.evaluate_on_test_set_only == False) \
             and (not self.args.test):
             with tqdm.tqdm(initial=self.state['current_iter'],
@@ -377,6 +392,14 @@ class ExperimentBuilder(object):
                         current_iter=self.state['current_iter'],
                         sample_idx=self.state['current_iter'])
 
+                    if self.args.attenuate:
+                        for i in range((self.model.num_layers - 2) // 2):
+                            gammas['conv-{}-weight'.format(i)].append(self.model.gamma[2*i].item())
+                            gammas['conv-{}-bias'.format(i)].append(self.model.gamma[2*i+1].item())
+                        i += 1
+                        gammas['linear-weight'].append(self.model.gamma[2*i].item())
+                        gammas['linear-bias'].append(self.model.gamma[2*i+1].item())
+
                     if self.state['current_iter'] % self.args.wandb_log_period == 0 and self.args.wandb:
                         wandb.log({'train_loss_mean': train_losses['train_loss_mean'],
                                    'train_loss_std': train_losses['train_loss_std'],
@@ -384,6 +407,55 @@ class ExperimentBuilder(object):
                                    'train_accuracy_std': train_losses['train_accuracy_std'],
                                    'meta_lr': current_lr},
                                   step=self.state['current_iter'])                        
+
+                        if self.args.attenuate:
+                            xs.append(self.state['current_iter'])
+                            mean = list(map(lambda x: np.mean(x), list(gammas.values())))
+                            weight_mean = mean[::2]
+                            bias_mean = mean[1::2]
+                            std = list(map(lambda x: np.std(x), list(gammas.values())))
+                            weight_std = std[::2]
+                            bias_std = std[1::2]
+
+                            for i in range(self.model.num_layers // 2):
+                                ys_weight_mean[i].append(weight_mean[i])
+                                ys_weight_std[i].append(weight_std[i])
+                                ys_bias_mean[i].append(bias_mean[i])
+                                ys_bias_std[i].append(bias_std[i])
+
+                                wandb.log({'gamma layer-{} weight'.format(i): weight_mean[i],
+                                           'gamma layer-{} std'.format(i): weight_std[i]},
+                                          step=self.state['current_iter'])
+                            
+                            '''                            
+                            wandb.log({'gamma_weight_mean': wandb.plot.line_series(
+                                xs=xs,
+                                ys=ys_weight_mean,
+                                keys=list(gammas.keys())[::2],
+                                title='mean of gamma for weight'
+                            )}, step=self.state['current_iter'])
+
+                            wandb.log({'gamma_weight_std': wandb.plot.line_series(
+                                xs=xs,
+                                ys=ys_weight_std,
+                                keys=list(gammas.keys())[::2],
+                                title='std of gamma for weight'
+                            )}, step=self.state['current_iter'])
+
+                            wandb.log({'gamma_bias_mean': wandb.plot.line_series(
+                                xs=xs,
+                                ys=ys_bias_mean,
+                                keys=list(gammas.keys())[1::2],
+                                title='mean of gamma for bias'
+                            )}, step=self.state['current_iter'])
+
+                            wandb.log({'gamma_bias_std': wandb.plot.line_series(
+                                xs=xs,
+                                ys=ys_bias_std,
+                                keys=list(gammas.keys())[1::2],
+                                title='std of gamma for bias'
+                            )}, step=self.state['current_iter'])
+                            '''
 
                     if self.state['current_iter'] % self.args.total_iter_per_epoch == 0:
 
@@ -397,18 +469,18 @@ class ExperimentBuilder(object):
                                                                                      total_losses=total_losses,
                                                                                      pbar_val=pbar_val, phase='val')
 
-                            if val_losses["val_accuracy_mean"] > self.state['best_val_acc']:
-                                print("Best validation accuracy", val_losses["val_accuracy_mean"])
-                                self.state['best_val_acc'] = val_losses["val_accuracy_mean"]
-                                self.state['best_val_iter'] = self.state['current_iter']
-                                self.state['best_epoch'] = int(
-                                    self.state['best_val_iter'] / self.args.total_iter_per_epoch)
+                        if val_losses["val_accuracy_mean"] > self.state['best_val_acc']:
+                            print("Best validation accuracy", val_losses["val_accuracy_mean"])
+                            self.state['best_val_acc'] = val_losses["val_accuracy_mean"]
+                            self.state['best_val_iter'] = self.state['current_iter']
+                            self.state['best_epoch'] = int(
+                                self.state['best_val_iter'] / self.args.total_iter_per_epoch)
 
-                            if self.args.wandb:
-                                wandb.log({'val_accuracy_mean': val_losses['val_accuracy_mean'],
-                                        'val_accuracy_std': val_losses['val_accuracy_std'],
-                                        'best_val_acc': self.state['best_val_acc']},
-                                        step=self.state['current_iter'])
+                        if self.args.wandb:
+                            wandb.log({'val_accuracy_mean': val_losses['val_accuracy_mean'],
+                                    'val_accuracy_std': val_losses['val_accuracy_std'],
+                                    'best_val_acc': self.state['best_val_acc']},
+                                    step=self.state['current_iter'])
 
                         self.epoch += 1
                         self.state = self.merge_two_dicts(first_dict=self.merge_two_dicts(first_dict=self.state,

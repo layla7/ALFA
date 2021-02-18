@@ -56,7 +56,7 @@
   "attenuate": true,
   "alfa": false,
   "random_init": false,
-  "backbone": "4-CONV",
+  "backbone": "ResNet12",
   "wandb": true,
   "wandb_log_period": 50,
   "attention": false,

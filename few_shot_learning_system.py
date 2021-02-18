@@ -131,6 +131,7 @@ class MAMLFewShotClassifier(nn.Module):
             ).to(device=self.device)
 
         if self.args.attenuate:
+            self.num_layers = len(names_weights_copy)
             if self.args.alfa:
                 self.optimizer = optim.Adam([
                     {'params':self.classifier.parameters()},
@@ -209,6 +210,7 @@ class MAMLFewShotClassifier(nn.Module):
     def attenuate_init(self, task_embeddings, names_weights_copy):
         # Generate attenuation parameters
         gamma = self.attenuator(task_embeddings)
+        self.gamma = gamma
 
         ## Attenuate
 
