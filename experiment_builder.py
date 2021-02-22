@@ -357,20 +357,14 @@ class ExperimentBuilder(object):
         Runs a full training experiment with evaluations of the model on the val set at every epoch. Furthermore,
         will return the test set evaluation results on the best performing validation model.
         """
+        num_layers = self.model.num_conv_layers
         if self.args.attenuate:
             gammas = {}
-            for i in range((self.model.num_conv_layers) // 2):
+            for i in range(num_layers):
                 gammas['conv-{}-weight'.format(i)] = []
-                gammas['conv-{}-bias'.format(i)] = []
+                #gammas['conv-{}-bias'.format(i)] = []
 
-            xs = []
-            ys_weight_mean = [[] for _ in range(self.model.num_conv_layers)]
-            ys_bias_mean = [[] for _ in range(self.model.num_conv_layers)]
-            ys_weight_std = [[] for _ in range(self.model.num_conv_layers)]
-            ys_bias_std = [[] for _ in range(self.model.num_conv_layers)]
-
-        while (self.state['current_iter'] < (self.args.total_epochs * self.args.total_iter_per_epoch)) and (self.args.evaluate_on_test_set_only == False) \
-            and (not self.args.test):
+        while (self.state['current_iter'] < (self.args.total_epochs * self.args.total_iter_per_epoch)) and (self.args.evaluate_on_test_set_only == False):
             with tqdm.tqdm(initial=self.state['current_iter'],
                         total=int(self.args.total_iter_per_epoch * self.args.total_epochs)) as pbar_train:
 
@@ -390,36 +384,34 @@ class ExperimentBuilder(object):
                         sample_idx=self.state['current_iter'])
 
                     if self.args.attenuate:
-                        for i in range((self.model.num_conv_layers) // 2):
+                        for i in range(num_layers):
                             gammas['conv-{}-weight'.format(i)].append(self.model.gamma[2*i].item())
-                            gammas['conv-{}-bias'.format(i)].append(self.model.gamma[2*i+1].item())
+                            #gammas['conv-{}-bias'.format(i)].append(self.model.gamma[2*i+1].item())
 
                     if self.state['current_iter'] % self.args.wandb_log_period == 0 and self.args.wandb:
                         wandb.log({'train_loss_mean': train_losses['train_loss_mean'],
                                    'train_loss_std': train_losses['train_loss_std'],
                                    'train_accuracy_mean': train_losses['train_accuracy_mean'],
-                                   'train_accuracy_std': train_losses['train_accuracy_std'],
-                                   'meta_lr': current_lr},
+                                   'train_accuracy_std': train_losses['train_accuracy_std']},
                                   step=self.state['current_iter'])                        
 
                         if self.args.attenuate:
-                            xs.append(self.state['current_iter'])
                             mean = list(map(lambda x: np.mean(x), list(gammas.values())))
-                            weight_mean = mean[::2]
-                            bias_mean = mean[1::2]
+                            weight_mean = mean
+                            #weight_mean = mean[::2]
+                            #bias_mean = mean[1::2]
                             std = list(map(lambda x: np.std(x), list(gammas.values())))
-                            weight_std = std[::2]
-                            bias_std = std[1::2]
+                            weight_std = std
+                            #weight_std = std[::2]
+                            #bias_std = std[1::2]
 
-                            for i in range(self.model.num_conv_layers // 2):
-                                ys_weight_mean[i].append(weight_mean[i])
-                                ys_weight_std[i].append(weight_std[i])
-                                ys_bias_mean[i].append(bias_mean[i])
-                                ys_bias_std[i].append(bias_std[i])
-
+                            for i in range(num_layers):
                                 wandb.log({'gamma layer-{} weight'.format(i): weight_mean[i],
                                            'gamma layer-{} std'.format(i): weight_std[i]},
                                           step=self.state['current_iter'])
+                                # for stochastic logging for gamma
+                                for value in gammas.values():
+                                    value.clear()
                             
                     if self.state['current_iter'] % self.args.total_iter_per_epoch == 0:
 

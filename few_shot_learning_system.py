@@ -11,8 +11,11 @@ from torch.autograd import grad
 
 from meta_neural_network_architectures import VGGReLUNormAttentionNetwork, VGGReLUNormNetwork, ResNet12
 from inner_loop_optimizers import (LSLRGradientDescentLearningRule,
-                                   LSLRGradientDescentLearningRuleALFA,
-                                   LSLRGradientDescentLearningRuleRM3)
+                                   LSLRGradientDescentLearningRuleALFA)
+from tsnecuda import TSNE
+from utils.custom_utils import (TSNE_logger,
+                                PCA_logger,
+                                LabelSmoothingLoss)
 
 
 def set_torch_seed(seed):
@@ -51,6 +54,9 @@ class MAMLFewShotClassifier(nn.Module):
         self.current_epoch = 0
         self.gradients_buffer = []
         self.gradients_counter = 0
+        self.tsne_logger = TSNE_logger(num_classes=args.num_classes_per_set, perplexity=20, learning_rate=10)
+        self.pca_logger = PCA_logger(num_classes=args.num_classes_per_set)
+        self.smoothing_loss = LabelSmoothingLoss(classes=args.num_classes_per_set, smoothing=0.1)
 
         self.rng = set_torch_seed(seed=args.seed)
 
@@ -71,16 +77,10 @@ class MAMLFewShotClassifier(nn.Module):
 
 
         if not self.args.alfa:
-            if self.args.RM3_inner:
-                self.inner_loop_optimizer = LSLRGradientDescentLearningRuleRM3(device=device,
-                                                                            init_learning_rate=self.task_learning_rate,
-                                                                            total_num_inner_loop_steps=self.args.number_of_training_steps_per_iter,
-                                                                            use_learnable_learning_rates=self.args.learnable_per_layer_per_step_inner_loop_learning_rate)
-            else:
-                self.inner_loop_optimizer = LSLRGradientDescentLearningRule(device=device,
-                                                                            init_learning_rate=self.task_learning_rate,
-                                                                            total_num_inner_loop_steps=self.args.number_of_training_steps_per_iter,
-                                                                            use_learnable_learning_rates=self.args.learnable_per_layer_per_step_inner_loop_learning_rate)
+            self.inner_loop_optimizer = LSLRGradientDescentLearningRule(device=device,
+                                                                        init_learning_rate=self.task_learning_rate,
+                                                                        total_num_inner_loop_steps=self.args.number_of_training_steps_per_iter,
+                                                                        use_learnable_learning_rates=self.args.learnable_per_layer_per_step_inner_loop_learning_rate)
             if self.args.attention:
                 names_weights_copy = self.get_inner_loop_parameter_dict(get_partial_weights(self.classifier.named_parameters()))
             else:
@@ -116,6 +116,7 @@ class MAMLFewShotClassifier(nn.Module):
         self.args = args
         self.to(device)
         self.num_conv_layers = len(names_weights_copy) - 2
+
         print("Outer Loop parameters")
         for name, param in self.named_parameters():
             if param.requires_grad:
@@ -185,7 +186,7 @@ class MAMLFewShotClassifier(nn.Module):
 
     def get_task_embeddings(self, x_support_set_task, y_support_set_task, names_weights_copy):
         # Use gradients as task embeddings
-        support_loss, support_preds = self.net_forward(x=x_support_set_task,
+        support_loss, support_preds, _ = self.net_forward(x=x_support_set_task,
                                                        y=y_support_set_task,
                                                        weights=names_weights_copy,
                                                        backup_running_statistics=True,
@@ -279,7 +280,7 @@ class MAMLFewShotClassifier(nn.Module):
             self.classifier.zero_grad(params=names_weights_copy)
 
         grads = torch.autograd.grad(loss, names_weights_copy.values(),
-                                    create_graph=use_second_order, allow_unused=True)
+                                    create_graph=use_second_order)
         names_grads_copy = dict(zip(names_weights_copy.keys(), grads))
 
         names_weights_copy = {key: value[0] for key, value in names_weights_copy.items()}
@@ -341,6 +342,7 @@ class MAMLFewShotClassifier(nn.Module):
         total_support_accuracies = [[] for i in range(num_steps)]
         total_target_accuracies = [[] for i in range(num_steps)]
         per_task_target_preds = [[] for i in range(len(x_target_set))]
+        per_task_target_latent_features = [[] for i in range(len(x_target_set))]
 
         if torch.cuda.device_count() > 1:
             self.classifier.module.zero_grad()
@@ -390,7 +392,7 @@ class MAMLFewShotClassifier(nn.Module):
 
             for num_step in range(num_steps):
 
-                support_loss, support_preds = self.net_forward(x=x_support_set_task,
+                support_loss, support_preds, support_latent_features = self.net_forward(x=x_support_set_task,
                                                                y=y_support_set_task,
                                                                weights=names_weights_copy,
                                                                backup_running_statistics=
@@ -429,7 +431,7 @@ class MAMLFewShotClassifier(nn.Module):
                                                                   current_step_idx=num_step)
 
                 if use_multi_step_loss_optimization and training_phase and epoch < self.args.multi_step_loss_num_epochs:
-                    target_loss, target_preds = self.net_forward(x=x_target_set_task,
+                    target_loss, target_preds, target_latent_features = self.net_forward(x=x_target_set_task,
                                                                  y=y_target_set_task, weights=names_weights_copy,
                                                                  backup_running_statistics=False, training=True,
                                                                  num_step=num_step)
@@ -438,19 +440,28 @@ class MAMLFewShotClassifier(nn.Module):
 
                 else:
                     if num_step == (self.args.number_of_training_steps_per_iter - 1):
-                        target_loss, target_preds = self.net_forward(x=x_target_set_task,
+                        target_loss, target_preds, target_latent_features = self.net_forward(x=x_target_set_task,
                                                                      y=y_target_set_task, weights=names_weights_copy,
                                                                      backup_running_statistics=False, training=True,
                                                                      num_step=num_step)
                         task_losses.append(target_loss)
 
-            per_task_target_preds[task_id] = target_preds.detach().cpu().numpy()
+            #per_task_target_preds[task_id] = target_preds.detach().cpu().numpy()
+            per_task_target_preds[task_id] = torch.nn.functional.softmax(target_preds.detach().cpu(), dim=1).numpy()
+            per_task_target_latent_features[task_id] = target_latent_features.detach().cpu().numpy()
             _, predicted = torch.max(target_preds.data, 1)
 
             accuracy = predicted.float().eq(y_target_set_task.data.float()).cpu().float()
             task_losses = torch.sum(torch.stack(task_losses))
             total_losses.append(task_losses)
             total_accuracies.extend(accuracy)
+
+            try:
+                if os.environ['TEST']:
+                    self.tsne_logger.run(np.array(per_task_target_latent_features[0]), y_target_set_task.detach().cpu().numpy(), True)
+                    #self.pca_logger.run(np.array(per_task_target_preds[0]), y_target_set_task.detach().cpu().numpy(), True)
+            except KeyError:
+                pass
 
             if not training_phase:
                 if torch.cuda.device_count() > 1:
@@ -481,13 +492,15 @@ class MAMLFewShotClassifier(nn.Module):
         :param num_step: An integer indicating the number of the step in the inner loop.
         :return: the crossentropy losses with respect to the given y, the predictions of the base model.
         """
-        preds = self.classifier.forward(x=x, params=weights,
-                                        training=training,
-                                        backup_running_statistics=backup_running_statistics, num_step=num_step)
+        preds, latent_feature = self.classifier.forward(x=x, params=weights,
+                                                        training=training,
+                                                        backup_running_statistics=backup_running_statistics, num_step=num_step)
 
-        loss = F.cross_entropy(input=preds, target=y)
+        #loss = F.cross_entropy(input=preds, target=y)
+        loss = self.smoothing_loss(preds, y)
+        #print(preds)
 
-        return loss, preds
+        return loss, preds, latent_feature
 
     def trainable_parameters(self):
         """
@@ -531,43 +544,14 @@ class MAMLFewShotClassifier(nn.Module):
         Applies an outer loop update on the meta-parameters of the model.
         :param loss: The current crossentropy loss.
         """
-        if self.args.RM3_meta:
-            #def grads(params):
-            #    for param in params:
-            #        yield param.grad.copy()
-            loss.backward()
-            for p in self.optimizer.param_groups[0]['params']:
-                for _ in range(3):
-                    self.gradients_buffer.append(torch.clone(p.grad.data).detach())
-            gradients = grad(loss, self.optimizer.param_groups[0]['params'])
-            #self.gradients_buffer[current_iter % 3] = grads(self.optimizer.param_groups[0]['params'])
-            self.gradients_buffer[current_iter % 3] = gradients
-
-            if current_iter >= 2:
-                sum_gradients = reduce(torch.add, self.gradients_buffer)
-                min_gradients = reduce(torch.min, self.gradients_buffer)
-                max_gradients = reduce(torch.max, self.gradients_buffer)
-                median_3 = sum_gradients - min_gradients - max_gradients
-
-                for param, gradient in zip(self.optimizer.param_groups[0]['params'], median_3):
-                    param.grad = gradient
-
-            else:
-                for p in self.optimizer.param_groups[0]['params']:
-                    pass
-                for param, gradient in zip(self.optimizer.param_groups[0]['params'], gradients):
-                    param.grad = gradient
-        
+        self.optimizer.zero_grad()
+        loss.backward()
         #if 'imagenet' in self.args.dataset_name:
         #    for name, param in self.classifier.named_parameters():
         #        if param.requires_grad:
         #            param.grad.data.clamp_(-10, 10)  # not sure if this is necessary, more experiments are needed
         #for name, param in self.classifier.named_parameters():
         #    print(param.mean())
-        else:
-            self.optimizer.zero_grad()
-            loss.backward()
-
         self.optimizer.step()
 
     def run_train_iter(self, data_batch, epoch, current_iter):

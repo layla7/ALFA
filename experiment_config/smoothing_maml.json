@@ -1,5 +1,5 @@
 {
-  "experiment_name":"RM3_maml_meta",
+  "experiment_name":"label_smoothing_maml",
   "batch_size":2,
   "image_height":84,
   "image_width":84,
@@ -57,7 +57,7 @@
   "alfa": false,
   "random_init": false,
   "backbone": "4-CONV",
-  "wandb": false,
+  "wandb": true,
   "wandb_log_period": 50,
   "attention": false
 }

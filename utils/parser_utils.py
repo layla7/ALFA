@@ -8,7 +8,6 @@ def get_args():
     import json
     parser = argparse.ArgumentParser(description='Welcome to the L2F training and inference system')
     parser.add_argument('--wandb_run_name', type=str)
-    parser.add_argument('--test', action='store_true', default=False)
     parser.add_argument('--batch_size', nargs="?", type=int, default=32, help='Batch_size for experiment')
     parser.add_argument('--image_height', nargs="?", type=int, default=28)
     parser.add_argument('--image_width', nargs="?", type=int, default=28)
@@ -68,6 +67,13 @@ def get_args():
     args_dict = vars(args)
     if args.name_of_args_json_file is not "None":
         args_dict = extract_args_from_json(args.name_of_args_json_file, args_dict)
+
+    try:
+        if os.environ['TEST']:
+            args_dict['wandb'] = False
+            args_dict['batch_size'] = 1
+    except KeyError:
+        pass
 
     for key in list(args_dict.keys()):
 

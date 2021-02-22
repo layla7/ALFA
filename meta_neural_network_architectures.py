@@ -1137,9 +1137,10 @@ class VGGReLUNormNetwork(nn.Module):
             out = F.avg_pool2d(out, out.shape[2])
 
         out = out.view(out.size(0), -1)
+        latent_features = out.clone()
         out = self.layer_dict['linear'](out, param_dict['linear'])
 
-        return out
+        return out, latent_features
 
     def re_init(self):
         #for param in self.parameters():

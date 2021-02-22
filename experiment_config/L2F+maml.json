@@ -59,8 +59,5 @@
   "backbone": "4-CONV",
   "wandb": true,
   "wandb_log_period": 50,
-  "attention": false,
-  "RM3_inner": false,
-  "RM3_meta": false,
-  "neptune": true
+  "attention": false
 }
