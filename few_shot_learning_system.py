@@ -68,8 +68,6 @@ class MAMLFewShotClassifier(nn.Module):
 
         self.task_learning_rate = args.init_inner_loop_learning_rate
 
-
-
         if self.args.alfa:
             self.inner_loop_optimizer = LSLRGradientDescentLearningRuleALFA(device=device,
                                                                         init_learning_rate=self.task_learning_rate,
@@ -445,7 +443,7 @@ class MAMLFewShotClassifier(nn.Module):
             total_accuracies.extend(accuracy)
 
             try:
-                if os.environ['TEST']:
+                if int(os.environ['LOG_EMBEDDING']):
                     self.tsne_logger.run(np.array(per_task_target_latent_features[0]), y_target_set_task.detach().cpu().numpy(), True)
                     #self.pca_logger.run(np.array(per_task_target_preds[0]), y_target_set_task.detach().cpu().numpy(), True)
             except KeyError:
