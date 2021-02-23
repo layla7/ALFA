@@ -9,13 +9,11 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.autograd import grad
 
-from meta_neural_network_architectures import VGGReLUNormAttentionNetwork, VGGReLUNormNetwork, ResNet12
+from meta_neural_network_architectures import VGGReLUNormNetwork, ResNet12
 from inner_loop_optimizers import (LSLRGradientDescentLearningRule,
                                    LSLRGradientDescentLearningRuleALFA)
-from tsnecuda import TSNE
 from utils.custom_utils import (TSNE_logger,
-                                PCA_logger,
-                                LabelSmoothingLoss)
+                                PCA_logger)
 
 
 def set_torch_seed(seed):
@@ -56,16 +54,11 @@ class MAMLFewShotClassifier(nn.Module):
         self.gradients_counter = 0
         self.tsne_logger = TSNE_logger(num_classes=args.num_classes_per_set, perplexity=20, learning_rate=10)
         self.pca_logger = PCA_logger(num_classes=args.num_classes_per_set)
-        self.smoothing_loss = LabelSmoothingLoss(classes=args.num_classes_per_set, smoothing=0.1)
 
         self.rng = set_torch_seed(seed=args.seed)
 
         if self.args.backbone == 'ResNet12':
             self.classifier = ResNet12(im_shape=self.im_shape, num_output_classes=self.args.
-                                                 num_classes_per_set,
-                                                 args=args, device=device, meta_classifier=True).to(device=self.device)
-        elif self.args.backbone == '4-CONV' and self.args.attention:
-            self.classifier = VGGReLUNormAttentionNetwork(im_shape=self.im_shape, num_output_classes=self.args.
                                                  num_classes_per_set,
                                                  args=args, device=device, meta_classifier=True).to(device=self.device)
         else:
@@ -76,16 +69,8 @@ class MAMLFewShotClassifier(nn.Module):
         self.task_learning_rate = args.init_inner_loop_learning_rate
 
 
-        if not self.args.alfa:
-            self.inner_loop_optimizer = LSLRGradientDescentLearningRule(device=device,
-                                                                        init_learning_rate=self.task_learning_rate,
-                                                                        total_num_inner_loop_steps=self.args.number_of_training_steps_per_iter,
-                                                                        use_learnable_learning_rates=self.args.learnable_per_layer_per_step_inner_loop_learning_rate)
-            if self.args.attention:
-                names_weights_copy = self.get_inner_loop_parameter_dict(get_partial_weights(self.classifier.named_parameters()))
-            else:
-                names_weights_copy = self.get_inner_loop_parameter_dict(self.classifier.named_parameters())
-        else:
+
+        if self.args.alfa:
             self.inner_loop_optimizer = LSLRGradientDescentLearningRuleALFA(device=device,
                                                                         init_learning_rate=self.task_learning_rate,
                                                                         init_weight_decay=args.init_inner_loop_weight_decay,
@@ -93,19 +78,15 @@ class MAMLFewShotClassifier(nn.Module):
                                                                         use_learnable_weight_decay=self.args.alfa,
                                                                         use_learnable_learning_rates=self.args.alfa,
                                                                         alfa=self.args.alfa, random_init=self.args.random_init)
-            names_weights_copy = self.get_inner_loop_parameter_dict(self.classifier.named_parameters())
+        else:
+            self.inner_loop_optimizer = LSLRGradientDescentLearningRule(device=device,
+                                                                        init_learning_rate=self.task_learning_rate,
+                                                                        total_num_inner_loop_steps=self.args.number_of_training_steps_per_iter,
+                                                                        use_learnable_learning_rates=self.args.learnable_per_layer_per_step_inner_loop_learning_rate)
+        names_weights_copy = self.get_inner_loop_parameter_dict(self.classifier.named_parameters())
+        self.inner_loop_optimizer.initialise(names_weights_dict=names_weights_copy)
 
-        if self.args.attenuate:
-            num_layers = len(names_weights_copy)
-            self.attenuator = nn.Sequential(
-                nn.Linear(num_layers, num_layers),
-                nn.ReLU(inplace=True),
-                nn.Linear(num_layers, num_layers),
-                nn.Sigmoid()
-            ).to(device=self.device)
 
-        self.inner_loop_optimizer.initialise(
-            names_weights_dict=names_weights_copy)
 
         print("Inner Loop parameters")
         for key, value in self.inner_loop_optimizer.named_parameters():
@@ -121,6 +102,16 @@ class MAMLFewShotClassifier(nn.Module):
         for name, param in self.named_parameters():
             if param.requires_grad:
                 print(name, param.shape, param.device, param.requires_grad)
+
+        # L2F
+        if self.args.attenuate:
+            num_layers = len(names_weights_copy)
+            self.attenuator = nn.Sequential(
+                nn.Linear(num_layers, num_layers),
+                nn.ReLU(inplace=True),
+                nn.Linear(num_layers, num_layers),
+                nn.Sigmoid()
+            ).to(device=self.device)
 
         # ALFA
         if self.args.alfa:
@@ -186,18 +177,18 @@ class MAMLFewShotClassifier(nn.Module):
 
     def get_task_embeddings(self, x_support_set_task, y_support_set_task, names_weights_copy):
         # Use gradients as task embeddings
-        support_loss, support_preds, _ = self.net_forward(x=x_support_set_task,
-                                                       y=y_support_set_task,
-                                                       weights=names_weights_copy,
-                                                       backup_running_statistics=True,
-                                                       training=True, num_step=0)
+        support_loss, support_preds, support_latent_features = self.net_forward(x=x_support_set_task,
+                                                                                y=y_support_set_task,
+                                                                                weights=names_weights_copy,
+                                                                                backup_running_statistics=True,
+                                                                                training=True, 
+                                                                                num_step=0)
 
         if torch.cuda.device_count() > 1:
             self.classifier.module.zero_grad(names_weights_copy)
         else:
             self.classifier.zero_grad(names_weights_copy)
         grads = torch.autograd.grad(support_loss, names_weights_copy.values(), create_graph=True)
-
 
         layerwise_mean_grads = []
 
@@ -212,8 +203,6 @@ class MAMLFewShotClassifier(nn.Module):
         # Generate attenuation parameters
         gamma = self.attenuator(task_embeddings)
         self.gamma = gamma
-
-        ## Attenuate
 
         updated_names_weights_copy = dict()
         i = 0
@@ -297,17 +286,16 @@ class MAMLFewShotClassifier(nn.Module):
                                                                          num_step=current_step_idx)
         else:
             names_weights_copy = self.inner_loop_optimizer.update_params(names_weights_dict=names_weights_copy,
-                                                                        names_grads_wrt_params_dict=names_grads_copy,
-                                                                        generated_alpha_params=generated_alpha_params,
-                                                                        generated_beta_params=generated_beta_params,
-                                                                        num_step=current_step_idx)
+                                                                         names_grads_wrt_params_dict=names_grads_copy,
+                                                                         generated_alpha_params=generated_alpha_params,
+                                                                         generated_beta_params=generated_beta_params,
+                                                                         num_step=current_step_idx)
 
         num_devices = torch.cuda.device_count() if torch.cuda.is_available() else 1
         names_weights_copy = {
             name.replace('module.', ''): value.unsqueeze(0).repeat(
                 [num_devices] + [1 for i in range(len(value.shape))]) for
             name, value in names_weights_copy.items()}
-
 
         return names_weights_copy
 
@@ -358,12 +346,7 @@ class MAMLFewShotClassifier(nn.Module):
             per_step_support_accuracy = []
             per_step_target_accuracy = []
             per_step_loss_importance_vectors = self.get_per_step_loss_importance_vector()
-            
-            if self.args.attention:
-                names_weights_copy = self.get_inner_loop_parameter_dict(get_partial_weights(self.classifier.named_parameters()))
-            else:
-                names_weights_copy = self.get_inner_loop_parameter_dict(self.classifier.named_parameters())
-
+            names_weights_copy = self.get_inner_loop_parameter_dict(self.classifier.named_parameters())
             num_devices = torch.cuda.device_count() if torch.cuda.is_available() else 1
 
             names_weights_copy = {
@@ -393,11 +376,12 @@ class MAMLFewShotClassifier(nn.Module):
             for num_step in range(num_steps):
 
                 support_loss, support_preds, support_latent_features = self.net_forward(x=x_support_set_task,
-                                                               y=y_support_set_task,
-                                                               weights=names_weights_copy,
-                                                               backup_running_statistics=
-                                                               True if (num_step == 0) else False,
-                                                               training=True, num_step=num_step)
+                                                                                        y=y_support_set_task,
+                                                                                        weights=names_weights_copy,
+                                                                                        backup_running_statistics=
+                                                                                        True if (num_step == 0) else False,
+                                                                                        training=True, 
+                                                                                        num_step=num_step)
                 generated_alpha_params = {}
                 generated_beta_params = {}
 
@@ -432,22 +416,26 @@ class MAMLFewShotClassifier(nn.Module):
 
                 if use_multi_step_loss_optimization and training_phase and epoch < self.args.multi_step_loss_num_epochs:
                     target_loss, target_preds, target_latent_features = self.net_forward(x=x_target_set_task,
-                                                                 y=y_target_set_task, weights=names_weights_copy,
-                                                                 backup_running_statistics=False, training=True,
-                                                                 num_step=num_step)
+                                                                                         y=y_target_set_task, 
+                                                                                         weights=names_weights_copy,
+                                                                                         backup_running_statistics=False, 
+                                                                                         training=True,
+                                                                                         num_step=num_step)
                     
                     task_losses.append(per_step_loss_importance_vectors[num_step] * target_loss)
 
                 else:
                     if num_step == (self.args.number_of_training_steps_per_iter - 1):
                         target_loss, target_preds, target_latent_features = self.net_forward(x=x_target_set_task,
-                                                                     y=y_target_set_task, weights=names_weights_copy,
-                                                                     backup_running_statistics=False, training=True,
-                                                                     num_step=num_step)
+                                                                                             y=y_target_set_task, 
+                                                                                             weights=names_weights_copy,
+                                                                                             backup_running_statistics=False, 
+                                                                                             training=True,
+                                                                                             num_step=num_step)
                         task_losses.append(target_loss)
 
-            #per_task_target_preds[task_id] = target_preds.detach().cpu().numpy()
-            per_task_target_preds[task_id] = torch.nn.functional.softmax(target_preds.detach().cpu(), dim=1).numpy()
+            per_task_target_preds[task_id] = target_preds.detach().cpu().numpy()
+            #per_task_target_preds[task_id] = torch.nn.functional.softmax(target_preds.detach().cpu(), dim=1).numpy()
             per_task_target_latent_features[task_id] = target_latent_features.detach().cpu().numpy()
             _, predicted = torch.max(target_preds.data, 1)
 
@@ -475,7 +463,7 @@ class MAMLFewShotClassifier(nn.Module):
         for idx, item in enumerate(per_step_loss_importance_vectors):
             losses['loss_importance_vector_{}'.format(idx)] = item.detach().cpu().numpy()
 
-        return losses, per_task_target_preds
+        return losses, per_task_target_preds, total_losses
 
     def net_forward(self, x, y, weights, backup_running_statistics, training, num_step):
         """
@@ -492,13 +480,13 @@ class MAMLFewShotClassifier(nn.Module):
         :param num_step: An integer indicating the number of the step in the inner loop.
         :return: the crossentropy losses with respect to the given y, the predictions of the base model.
         """
-        preds, latent_feature = self.classifier.forward(x=x, params=weights,
+        preds, latent_feature = self.classifier.forward(x=x, 
+                                                        params=weights,
                                                         training=training,
-                                                        backup_running_statistics=backup_running_statistics, num_step=num_step)
+                                                        backup_running_statistics=backup_running_statistics, 
+                                                        num_step=num_step)
 
-        #loss = F.cross_entropy(input=preds, target=y)
-        loss = self.smoothing_loss(preds, y)
-        #print(preds)
+        loss = F.cross_entropy(input=preds, target=y)
 
         return loss, preds, latent_feature
 
@@ -517,12 +505,13 @@ class MAMLFewShotClassifier(nn.Module):
         :param epoch: The index of the currrent epoch.
         :return: A dictionary of losses for the current step.
         """
-        losses, per_task_target_preds = self.forward(data_batch=data_batch, epoch=epoch,
-                                                     use_second_order=self.args.second_order and
-                                                                      epoch > self.args.first_order_to_second_order_epoch,
-                                                     use_multi_step_loss_optimization=self.args.use_multi_step_loss_optimization,
-                                                     num_steps=self.args.number_of_training_steps_per_iter,
-                                                     training_phase=True)
+        losses, per_task_target_preds, total_losses = self.forward(data_batch=data_batch, 
+                                                                   epoch=epoch,
+                                                                   use_second_order=self.args.second_order and
+                                                                   epoch > self.args.first_order_to_second_order_epoch,
+                                                                   use_multi_step_loss_optimization=self.args.use_multi_step_loss_optimization,
+                                                                   num_steps=self.args.number_of_training_steps_per_iter,
+                                                                   training_phase=True)
         return losses, per_task_target_preds
 
     def evaluation_forward_prop(self, data_batch, epoch):
@@ -532,10 +521,12 @@ class MAMLFewShotClassifier(nn.Module):
         :param epoch: The index of the currrent epoch.
         :return: A dictionary of losses for the current step.
         """
-        losses, per_task_target_preds = self.forward(data_batch=data_batch, epoch=epoch, use_second_order=False,
-                                                     use_multi_step_loss_optimization=True,
-                                                     num_steps=self.args.number_of_evaluation_steps_per_iter,
-                                                     training_phase=False)
+        losses, per_task_target_preds, total_losses = self.forward(data_batch=data_batch, 
+                                                                   epoch=epoch, 
+                                                                   use_second_order=False,
+                                                                   use_multi_step_loss_optimization=True,
+                                                                   num_steps=self.args.number_of_evaluation_steps_per_iter,
+                                                                   training_phase=False)
 
         return losses, per_task_target_preds
 
