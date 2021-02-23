@@ -37,7 +37,7 @@
   "min_learning_rate":0.001,
   "meta_learning_rate":0.001,   "total_epochs_before_pause": 300,
   "task_learning_rate":-1,
-  "first_order_to_second_order_epoch":10,
+  "first_order_to_second_order_epoch":-1,
   "weight_decay": 0.0,
 
   "norm_layer":"batch_norm",

@@ -43,6 +43,7 @@
   "norm_layer":"batch_norm",
   "cnn_num_filters":48,
   "num_stages":4,
+  "use_bias": false,
   "conv_padding": true,
   "number_of_training_steps_per_iter":5,
   "number_of_evaluation_steps_per_iter":5,
