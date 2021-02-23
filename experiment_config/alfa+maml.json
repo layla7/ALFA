@@ -1,5 +1,5 @@
 {
-  "experiment_name":"alfa+maml",
+  "experiment_name":"alfa-5way-5shot-4conv",
   "batch_size":2,
   "image_height":84,
   "image_width":84,

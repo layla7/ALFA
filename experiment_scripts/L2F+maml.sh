@@ -6,6 +6,9 @@
 export WANDB_RUN_NAME=$1
 export GPU_ID=$2
 
+# if [ -n "$VARIABLE" ] --> true if VARIABLE exists.
+# if [ -z "$VARIABLE" ] --> true if VARIABLE doesn't exist.
+
 echo $GPU_ID
 
 cd ..
