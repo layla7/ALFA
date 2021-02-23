@@ -362,12 +362,14 @@ class ExperimentBuilder(object):
         Runs a full training experiment with evaluations of the model on the val set at every epoch. Furthermore,
         will return the test set evaluation results on the best performing validation model.
         """
-        num_layers = self.model.num_conv_layers
+        num_conv_layers = self.model.num_conv_layers
         if self.args.attenuate:
             gammas = {}
-            for i in range(num_layers):
+            for i in range(num_conv_layers):
                 gammas['conv-{}-weight'.format(i)] = []
                 #gammas['conv-{}-bias'.format(i)] = []
+            gammas['classifier-weight'] = []
+            gammas['classifier-bias'] = []
 
         while (self.state['current_iter'] < (self.args.total_epochs * self.args.total_iter_per_epoch)) and (self.args.evaluate_on_test_set_only == False):
             with tqdm.tqdm(initial=self.state['current_iter'],
@@ -389,9 +391,12 @@ class ExperimentBuilder(object):
                         sample_idx=self.state['current_iter'])
 
                     if self.args.attenuate:
-                        for i in range(num_layers):
-                            gammas['conv-{}-weight'.format(i)].append(self.model.gamma[2*i].item())
+                        for i in range(num_conv_layers):
+                            gammas['conv-{}-weight'.format(i)].append(self.model.gamma[i].item())
+                            #gammas['conv-{}-weight'.format(i)].append(self.model.gamma[2*i].item())
                             #gammas['conv-{}-bias'.format(i)].append(self.model.gamma[2*i+1].item())
+                        gammas['classifier-weight'].append(self.model.gamma[i+1].item())
+                        gammas['classifier-bias'].append(self.model.gamma[i+2].item())
 
                     if self.state['current_iter'] % self.args.wandb_log_period == 0 and self.args.wandb:
                         wandb.log({'train_loss_mean': train_losses['train_loss_mean'],
@@ -402,21 +407,25 @@ class ExperimentBuilder(object):
 
                         if self.args.attenuate:
                             mean = list(map(lambda x: np.mean(x), list(gammas.values())))
-                            weight_mean = mean
                             #weight_mean = mean[::2]
                             #bias_mean = mean[1::2]
                             std = list(map(lambda x: np.std(x), list(gammas.values())))
-                            weight_std = std
                             #weight_std = std[::2]
                             #bias_std = std[1::2]
 
-                            for i in range(num_layers):
-                                wandb.log({'gamma layer-{} weight'.format(i): weight_mean[i],
-                                           'gamma layer-{} std'.format(i): weight_std[i]},
+                            for i in range(num_conv_layers):
+                                wandb.log({'gamma conv-{}-weight mean'.format(i): mean[i],
+                                           'gamma conv-{}-weight std'.format(i): std[i]},
                                           step=self.state['current_iter'])
-                                # for stochastic logging for gamma
-                                for value in gammas.values():
-                                    value.clear()
+                            wandb.log({'gamma classifier-weight mean': mean[i+1],
+                                       'gamma classifier-weight std': std[i+1]},
+                                      step=self.state['current_iter'])
+                            wandb.log({'gamma classifier-bias mean': mean[i+2],
+                                       'gamma classifier-bias std': std[i+2]},
+                                      step=self.state['current_iter'])
+                            # for stochastic logging for gamma
+                            for value in gammas.values():
+                                value.clear()
                             
                     if self.state['current_iter'] % self.args.total_iter_per_epoch == 0:
 
