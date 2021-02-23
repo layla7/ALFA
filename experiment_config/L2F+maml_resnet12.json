@@ -58,6 +58,5 @@
   "random_init": false,
   "backbone": "ResNet12",
   "wandb": true,
-  "wandb_log_period": 50,
-  "attention": false
+  "wandb_log_period": 50
 }
