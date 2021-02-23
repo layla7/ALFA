@@ -41,8 +41,13 @@ class ExperimentBuilder(object):
             self.saved_models_filepath, self.logs_filepath, self.samples_filepath = build_experiment_folder(
                 experiment_name='experiments/'+project_name+'/'+self.args.experiment_name+'_{}'.format(wandb_id))
         else:
-            self.saved_models_filepath, self.logs_filepath, self.samples_filepath = build_experiment_folder(
-                experiment_name='experiments/'+project_name+'/'+self.args.experiment_name)
+            try:
+                wandb_id = os.environ['WANDB_RUN_ID']
+                self.saved_models_filepath, self.logs_filepath, self.samples_filepath = build_experiment_folder(
+                    experiment_name='experiments/'+project_name+'/'+self.args.experiment_name+'_{}'.format(wandb_id))
+            except KeyError:
+                self.saved_models_filepath, self.logs_filepath, self.samples_filepath = build_experiment_folder(
+                    experiment_name='experiments/'+project_name+'/'+self.args.experiment_name)
 
         self.total_losses = dict()
         self.state = dict()
