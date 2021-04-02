@@ -4,12 +4,16 @@ __pycache__/
 *$py.class
 
 *.swp
+*.jpg
+*.png
 .vscode
 datasets
 wandb
 *.ipynb
 experiments
 legacy
+stats
+jupyter
 
 # C extensions
 *.so
