@@ -71,7 +71,7 @@ def get_args():
     try:
         if os.environ['TEST']:
             args_dict['wandb'] = False
-            args_dict['batch_size'] = 1
+            args_dict['batch_size'] = int(os.environ['TEST_BATCH_SIZE'])
     except KeyError:
         pass
 

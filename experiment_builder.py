@@ -1,11 +1,13 @@
 import tqdm.autonotebook as tqdm
-import os
+import os, glob, shutil, pickle
 import numpy as np
 import sys
 from utils.storage import build_experiment_folder, save_statistics, save_to_json
 import time
 import torch
 import wandb
+from torch.utils.tensorboard import SummaryWriter
+#from matplotlib import pyplot as plt
 
 
 class ExperimentBuilder(object):
@@ -21,7 +23,7 @@ class ExperimentBuilder(object):
         self.args, self.device = args, device
         self.model = model
 
-        project_name = args.backbone+'-{}way-{}shot'.format(args.num_classes_per_set, args.num_samples_per_class)
+        project_name = args.dataset_name + '-' + args.backbone+'-{}way-{}shot'.format(args.num_classes_per_set, args.num_samples_per_class)
         if args.wandb:
             try:
                 wandb_id = os.environ['WANDB_RUN_ID']
@@ -39,15 +41,34 @@ class ExperimentBuilder(object):
             wandb.watch(self.model)
 
             self.saved_models_filepath, self.logs_filepath, self.samples_filepath = build_experiment_folder(
-                experiment_name='experiments/'+project_name+'/'+self.args.experiment_name+'_{}'.format(wandb_id))
+                #experiment_name='experiments/'+project_name+'/'+self.args.experiment_name+'_{}'.format(wandb_id))
+                experiment_name='experiments/'+project_name+'/'+self.args.wandb_run_name+'_{}'.format(wandb_id))
         else:
             try:
                 wandb_id = os.environ['WANDB_RUN_ID']
                 self.saved_models_filepath, self.logs_filepath, self.samples_filepath = build_experiment_folder(
-                    experiment_name='experiments/'+project_name+'/'+self.args.experiment_name+'_{}'.format(wandb_id))
+                    #experiment_name='experiments/'+project_name+'/'+self.args.experiment_name+'_{}'.format(wandb_id))
+                    experiment_name='experiments/'+project_name+'/'+self.args.wandb_run_name+'_{}'.format(wandb_id))
             except KeyError:
                 self.saved_models_filepath, self.logs_filepath, self.samples_filepath = build_experiment_folder(
-                    experiment_name='experiments/'+project_name+'/'+self.args.experiment_name)
+                    #experiment_name='experiments/'+project_name+'/'+self.args.experiment_name)
+                    experiment_name='experiments/'+project_name+'/'+self.args.wandb_run_name)
+
+        self.model.logs_filepath = self.logs_filepath
+
+        copy_target = ['experiment_config', 'experiment_scripts', 'utils', 'data.py', 'experiment_builder.py',
+                       'few_shot_learning_system.py', 'inner_loop_optimizers.py', 'meta_neural_network_architectures.py', 
+                       'train_maml_system.py']
+        backup_filepath = self.logs_filepath.replace('logs', 'backup')
+        for item in copy_target:
+            if os.path.isdir(item):
+                target_path = backup_filepath + '/{}'.format(item)
+                os.makedirs(target_path, exist_ok=True)
+                shutil.copytree(item, target_path, dirs_exist_ok=True)
+            else:
+                shutil.copy2(item, backup_filepath + '/{}'.format(item))
+            
+        self.tb_writer = SummaryWriter(self.logs_filepath+'/tensorboard')
 
         self.total_losses = dict()
         self.state = dict()
@@ -173,7 +194,7 @@ class ExperimentBuilder(object):
 
         return train_losses, total_losses, current_iter, current_lr
 
-    def evaluation_iteration(self, val_sample, total_losses, pbar_val, phase):
+    def evaluation_iteration(self, val_sample, total_losses, pbar_val, phase, current_iter):
         """
         Runs a validation iteration, updates the progress bar and returns the total and current epoch val losses.
         :param val_sample: A sample from the data provider
@@ -201,7 +222,7 @@ class ExperimentBuilder(object):
         hook(self.model.classifier, hook_fn_wandb_log)
         '''
 
-        losses, _ = self.model.run_validation_iter(data_batch=data_batch)
+        losses, _ = self.model.run_validation_iter(data_batch=data_batch, current_iter=current_iter)
         for key, value in zip(list(losses.keys()), list(losses.values())):
             if key not in total_losses:
                 total_losses[key] = [float(value)]
@@ -231,7 +252,7 @@ class ExperimentBuilder(object):
         data_batch = (
             x_support_set, x_target_set, y_support_set, y_target_set)
 
-        losses, per_task_preds = self.model.run_validation_iter(data_batch=data_batch)
+        losses, per_task_preds = self.model.run_validation_iter(data_batch=data_batch, current_iter='test')
 
         per_model_per_batch_preds[model_idx].extend(list(per_task_preds))
 
@@ -313,6 +334,7 @@ class ExperimentBuilder(object):
         top_n_idx = val_idx[:top_n_models]
         per_model_per_batch_preds = [[] for i in range(top_n_models)]
         per_model_per_batch_targets = [[] for i in range(top_n_models)]
+        per_model_per_batch_gammas = [[] for i in range(top_n_models)]
         test_losses = [dict() for i in range(top_n_models)]
         for idx, model_idx in enumerate(top_n_idx):
             self.state = \
@@ -329,18 +351,35 @@ class ExperimentBuilder(object):
                                                                                model_idx=idx,
                                                                                per_model_per_batch_preds=per_model_per_batch_preds,
                                                                                pbar_test=pbar_test)
+                    if self.args.attenuate:
+                        per_model_per_batch_gammas[idx].append(self.model.gamma.tolist())
+
+            '''
+            plt.hist(list(map(np.log, self.model.probs)), bins=[0.1*i for i in range(-35, 1)], 
+                     ls='dashed', edgecolor='k', lw=1, color='red', alpha=0.7, label='predicted')
+            plt.hist(list(map(np.log, self.model.true_probs)), bins=[0.1*i for i in range(-35, 1)], 
+                     ls='dashed', edgecolor='k', lw=1, color='blue', alpha=0.7, label='true target')
+            plt.legend(loc='upper left')
+            plt.show()
+            '''
+
         # for i in range(top_n_models):
         #     print("test assertion", 0)
         #     print(per_model_per_batch_targets[0], per_model_per_batch_targets[i])
         #     assert np.equal(np.array(per_model_per_batch_targets[0]), np.array(per_model_per_batch_targets[i]))
         
         per_batch_preds = np.mean(per_model_per_batch_preds, axis=0)
-        #print(per_batch_preds.shape)
         per_batch_max = np.argmax(per_batch_preds, axis=2)
         per_batch_targets = np.array(per_model_per_batch_targets[0]).reshape(per_batch_max.shape)
-        #print(per_batch_max)
         accuracy = np.mean(np.equal(per_batch_targets, per_batch_max))
         accuracy_std = np.std(np.equal(per_batch_targets, per_batch_max))
+
+        per_batch_accuracy = np.mean(np.equal(per_batch_targets, per_batch_max), axis=1)
+        per_batch_accuracy_std = np.std(np.equal(per_batch_targets, per_batch_max), axis=1)
+        print(np.equal(per_batch_targets, per_batch_max).shape)
+
+        if self.args.attenuate:
+            per_batch_gammas = np.mean(per_model_per_batch_gammas, axis=0)
 
         test_losses = {"test_accuracy_mean": accuracy, "test_accuracy_std": accuracy_std}
         dataset_name = self.data.dataset.dataset_name
@@ -352,7 +391,18 @@ class ExperimentBuilder(object):
         summary_statistics_filepath = save_statistics(self.logs_filepath,
                                                       list(test_losses.values()),
                                                       create=False, filename="test_summary_{}.csv".format(dataset_name))
-        #print(test_losses)
+
+        if self.args.attenuate:
+            gamma_key = ['gamma-{}'.format(i) for i in range(len(self.model.gamma.tolist()))]
+            save_statistics(self.logs_filepath, 
+                            ['task number', 'accuracy', 'std of accuracy', *gamma_key], create=True, 
+                            filename='test_summary_per_task_{}.csv'.format(dataset_name))
+
+            for i, (acc, std, gammas) in enumerate(zip(per_batch_accuracy, per_batch_accuracy_std, per_batch_gammas), 1):
+                save_statistics(self.logs_filepath, 
+                                [i, acc, std, *gammas.tolist()], create=False, 
+                                filename='test_summary_per_task_{}.csv'.format(dataset_name))
+
         print('\n')
         print('test accuracy mean: {:.4f} test accuracy std: {:.4f}'.format(*test_losses.values()))
         print("saved test performance at", summary_statistics_filepath)
@@ -402,7 +452,9 @@ class ExperimentBuilder(object):
                         wandb.log({'train_loss_mean': train_losses['train_loss_mean'],
                                    'train_loss_std': train_losses['train_loss_std'],
                                    'train_accuracy_mean': train_losses['train_accuracy_mean'],
-                                   'train_accuracy_std': train_losses['train_accuracy_std']},
+                                   'train_accuracy_std': train_losses['train_accuracy_std'],
+                                   'train_adaptation_loss_mean': train_losses['train_adaptation_loss_mean'],
+                                   'train_adaptation_loss_std': train_losses['train_adaptation_loss_std']},
                                   step=self.state['current_iter'])                        
 
                         if self.args.attenuate:
@@ -437,7 +489,8 @@ class ExperimentBuilder(object):
                                                               augment_images=False)):
                                 val_losses, total_losses = self.evaluation_iteration(val_sample=val_sample,
                                                                                      total_losses=total_losses,
-                                                                                     pbar_val=pbar_val, phase='val')
+                                                                                     pbar_val=pbar_val, phase='val',
+                                                                                     current_iter=self.state['current_iter'])
 
                         if val_losses["val_accuracy_mean"] > self.state['best_val_acc']:
                             print("Best validation accuracy", val_losses["val_accuracy_mean"])
@@ -477,3 +530,9 @@ class ExperimentBuilder(object):
                                                                                       self.data.dataset.seed["val"]))
                             #sys.exit()
         self.evaluated_test_set_using_the_best_models(top_n_models=5)
+        d = {'train_total_min': self.model.train_total_min_loss,
+             'train_total_max': self.model.train_total_max_loss,
+             'val_total_min': self.model.val_total_min_loss,
+             'val_total_max': self.model.val_total_max_loss}
+        with open('landscape/landscape_{}.pkl'.format(os.environ['LANDSCAPE']), 'wb') as f:
+            pickle.dump(d, f)
